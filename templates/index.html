@@ -3,73 +3,373 @@
 <head>
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>PDF & Image OCR Coordinates</title>
+	<title>Gemini + OCR Name Extractor</title>
 	<style>
-		body { font-family: Arial, sans-serif; margin: 24px; }
-		.container { max-width: 1200px; margin: 0 auto; }
-		.upload-card { border: 1px solid #ddd; padding: 16px; border-radius: 8px; }
-		.page { margin-top: 24px; }
-		.page-title { font-weight: bold; margin-bottom: 8px; }
-		.page-wrapper { position: relative; display: inline-block; border: 1px solid #e5e5e5; }
-		.page-image { display: block; }
-		.box { position: absolute; border: 2px solid rgba(255, 0, 0, 0.8); box-sizing: border-box; }
-		.label { position: absolute; top: -18px; left: 0; background: rgba(255,0,0,0.85); color: #fff; font-size: 12px; padding: 2px 4px; white-space: nowrap; }
-		table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-		th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
-		th { background-color: #f2f2f2; font-weight: bold; }
-		tr:nth-child(even) { background-color: #fafafa; }
+		* { box-sizing: border-box; }
+		body { 
+			font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+			margin: 0; 
+			padding: 24px; 
+			background: #f5f5f5;
+		}
+		.container { 
+			max-width: 1800px; 
+			margin: 0 auto; 
+			background: white;
+			border-radius: 12px;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+			padding: 32px;
+		}
+		h1 {
+			color: #2c3e50;
+			margin-bottom: 8px;
+		}
+		.subtitle {
+			color: #7f8c8d;
+			margin-bottom: 24px;
+		}
+		.upload-card { 
+			border: 2px dashed #3498db; 
+			padding: 24px; 
+			border-radius: 8px; 
+			margin-bottom: 32px;
+			background: #ecf0f1;
+			text-align: center;
+		}
+		.upload-card input[type="file"] {
+			margin: 12px 0;
+		}
+		.upload-card button {
+			background: #3498db;
+			color: white;
+			border: none;
+			padding: 12px 32px;
+			border-radius: 6px;
+			font-size: 16px;
+			cursor: pointer;
+			transition: background 0.3s;
+		}
+		.upload-card button:hover {
+			background: #2980b9;
+		}
+		.download-excel-btn {
+			background: #27ae60;
+			color: white;
+			border: none;
+			padding: 12px 24px;
+			border-radius: 6px;
+			font-size: 15px;
+			cursor: pointer;
+			transition: background 0.3s;
+			text-decoration: none;
+			display: inline-block;
+			margin-bottom: 24px;
+		}
+		.download-excel-btn:hover {
+			background: #229954;
+		}
+		.result-section { 
+			margin-top: 32px; 
+			border-top: 3px solid #3498db;
+			padding-top: 24px;
+		}
+		.page-title { 
+			font-size: 24px;
+			font-weight: bold; 
+			margin-bottom: 16px;
+			color: #2c3e50;
+		}
+		.stats-bar {
+			display: flex;
+			gap: 24px;
+			margin-bottom: 24px;
+			padding: 16px;
+			background: #ecf0f1;
+			border-radius: 8px;
+		}
+		.stat-item {
+			display: flex;
+			flex-direction: column;
+		}
+		.stat-label {
+			font-size: 12px;
+			color: #7f8c8d;
+			text-transform: uppercase;
+			letter-spacing: 0.5px;
+		}
+		.stat-value {
+			font-size: 24px;
+			font-weight: bold;
+			color: #2c3e50;
+		}
+		.content-grid {
+			display: grid;
+			grid-template-columns: 1fr 1fr;
+			gap: 24px;
+			margin-bottom: 32px;
+		}
+		.image-panel {
+			position: relative;
+		}
+		.page-wrapper { 
+			position: relative; 
+			display: inline-block;
+			width: 100%;
+			border: 1px solid #ddd;
+			border-radius: 8px;
+			overflow: hidden;
+			background: white;
+		}
+		.page-image { 
+			display: block; 
+			width: 100%;
+			height: auto;
+		}
+		.box { 
+			position: absolute; 
+			border: 2px solid rgba(231, 76, 60, 0.8); 
+			box-sizing: border-box;
+			background: rgba(231, 76, 60, 0.1);
+		}
+		.box.matched {
+			border-color: rgba(46, 204, 113, 0.8);
+			background: rgba(46, 204, 113, 0.1);
+		}
+		.label { 
+			position: absolute; 
+			top: -20px; 
+			left: 0; 
+			background: rgba(46, 204, 113, 0.9); 
+			color: #fff; 
+			font-size: 11px; 
+			padding: 3px 6px; 
+			white-space: nowrap;
+			border-radius: 3px;
+			font-weight: bold;
+		}
+		.section-title {
+			font-size: 18px;
+			font-weight: bold;
+			margin-bottom: 16px;
+			color: #2c3e50;
+			border-bottom: 2px solid #3498db;
+			padding-bottom: 8px;
+		}
+		.legend {
+			display: flex;
+			gap: 16px;
+			margin-bottom: 16px;
+			font-size: 13px;
+		}
+		.legend-item {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+		}
+		.legend-box {
+			width: 20px;
+			height: 20px;
+			border-radius: 3px;
+			border: 2px solid;
+		}
+		.legend-ocr {
+			border-color: rgba(231, 76, 60, 0.8);
+			background: rgba(231, 76, 60, 0.1);
+		}
+		.legend-matched {
+			border-color: rgba(46, 204, 113, 0.8);
+			background: rgba(46, 204, 113, 0.1);
+		}
+		.grouped-name-table {
+			margin-bottom: 32px;
+		}
+		table { 
+			border-collapse: collapse; 
+			width: 100%; 
+			background: white;
+			border-radius: 8px;
+			overflow: hidden;
+			box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+		}
+		th, td { 
+			border: 1px solid #dee2e6; 
+			padding: 12px; 
+			text-align: left; 
+			font-size: 13px; 
+		}
+		th { 
+			background-color: #3498db; 
+			font-weight: bold;
+			color: white;
+		}
+		tr:nth-child(even) { 
+			background-color: #f8f9fa; 
+		}
+		tr:hover {
+			background-color: #e3f2fd;
+		}
+		.matched-row {
+			background-color: #d4edda !important;
+		}
 	</style>
 </head>
 <body>
 	<div class="container">
-		<h1>PDF & Image OCR Coordinates</h1>
+		<h1>🤖 Gemini + OCR Name Extractor</h1>
+		<p class="subtitle">Extract names intelligently using AI and match them with precise coordinates</p>
+		
 		<div class="upload-card">
+			<h3>📤 Upload Document</h3>
 			<form method="post" action="/upload" enctype="multipart/form-data">
 				<input type="file" name="file" accept="application/pdf,image/*" required />
-				<button type="submit">Upload & Extract</button>
+				<br>
+				<button type="submit">🚀 Extract Names</button>
 			</form>
 		</div>
 
-		{% if pages %}
-			{% for page in pages %}
-				<div class="page">
-					<div class="page-title">{{ page.page_label }} — {{ page.width }} × {{ page.height }} px</div>
-					<div class="page-wrapper" style="width: {{ page.width }}px; height: {{ page.height }}px;">
-						<img class="page-image" src="data:image/png;base64,{{ page.image_b64 }}" width="{{ page.width }}" height="{{ page.height }}" alt="{{ page.page_label }}" />
-						{% for b in page.boxes %}
-							<div class="box" style="left: {{ b.x }}px; top: {{ b.y }}px; width: {{ b.right - b.x }}px; height: {{ b.bottom - b.y }}px;">
-								<div class="label">{{ b.text }} ({{ '%.0f' % b.conf }})</div>
-							</div>
-						{% endfor %}
+		{% if results %}
+			<a href="/download-ocr-excel" class="download-excel-btn">📥 Download OCR Coordinates (Excel)</a>
+			
+			{% for result in results %}
+				<div class="result-section">
+					<div class="page-title">📄 {{ result.page_label }}</div>
+					
+					<div class="stats-bar">
+						<div class="stat-item">
+							<span class="stat-label">Total Names Found</span>
+							<span class="stat-value">{{ result.total_names }}</span>
+						</div>
+						<div class="stat-item">
+							<span class="stat-label">OCR Words</span>
+							<span class="stat-value">{{ result.ocr_boxes|length }}</span>
+						</div>
+						<div class="stat-item">
+							<span class="stat-label">Matched Items</span>
+							<span class="stat-value">{{ result.matched_names|length }}</span>
+						</div>
+						<div class="stat-item">
+							<span class="stat-label">Image Size</span>
+							<span class="stat-value">{{ result.width }} × {{ result.height }}</span>
+						</div>
 					</div>
 
-					<h3>Extracted Text Data ({{ page.page_label }})</h3>
-					<table>
-						<thead>
-							<tr>
-								<th>#</th>
-								<th>Text</th>
-								<th>X (Left)</th>
-								<th>Y (Top)</th>
-								<th>Right</th>
-								<th>Bottom</th>
-								<th>Confidence</th>
-							</tr>
-						</thead>
-						<tbody>
-							{% for b in page.boxes %}
+					<div class="content-grid">
+						<!-- Image 1: All OCR Boxes (Red) -->
+						<div class="image-panel">
+							<div class="section-title">📸 All OCR Detected Words</div>
+							<div class="legend">
+								<div class="legend-item">
+									<div class="legend-box legend-ocr"></div>
+									<span>All OCR Words</span>
+								</div>
+							</div>
+							<div class="page-wrapper">
+								<img class="page-image" src="data:image/png;base64,{{ result.image_b64 }}" alt="{{ result.page_label }}" />
+								
+								<!-- Draw ALL OCR boxes in red -->
+								{% for b in result.ocr_boxes %}
+									<div class="box" style="left: {{ (b.x / result.width * 100)|round(2) }}%; top: {{ (b.y / result.height * 100)|round(2) }}%; width: {{ ((b.right - b.x) / result.width * 100)|round(2) }}%; height: {{ ((b.bottom - b.y) / result.height * 100)|round(2) }}%;">
+									</div>
+								{% endfor %}
+							</div>
+						</div>
+
+						<!-- Image 2: Only Matched Names (Green) -->
+						<div class="image-panel">
+							<div class="section-title">✅ Gemini Extracted Names (Matched)</div>
+							<div class="legend">
+								<div class="legend-item">
+									<div class="legend-box legend-matched"></div>
+									<span>Matched Names Only</span>
+								</div>
+							</div>
+							<div class="page-wrapper">
+								<img class="page-image" src="data:image/png;base64,{{ result.image_b64 }}" alt="{{ result.page_label }}" />
+								
+								<!-- Draw ONLY matched name boxes in green with labels -->
+								{% for m in result.matched_names %}
+									{% set m_right = m.right if m.right is defined else (m.x + m.width if m.width is defined else 0) %}
+									{% set m_bottom = m.bottom if m.bottom is defined else (m.y + m.height if m.height is defined else 0) %}
+									{% if m_right > 0 and m_bottom > 0 %}
+										<div class="box matched" style="left: {{ (m.x / result.width * 100)|round(2) }}%; top: {{ (m.y / result.height * 100)|round(2) }}%; width: {{ ((m_right - m.x) / result.width * 100)|round(2) }}%; height: {{ ((m_bottom - m.y) / result.height * 100)|round(2) }}%;">
+											<div class="label">{{ m.value }}</div>
+										</div>
+									{% endif %}
+								{% endfor %}
+							</div>
+						</div>
+					</div>
+
+					<!-- Individual Name Parts Table -->
+					<div class="section-title">👤 Extracted Names - Individual Parts with Coordinates</div>
+					<div class="grouped-name-table">
+						<table>
+							<thead>
 								<tr>
-									<td>{{ loop.index }}</td>
-									<td>{{ b.text }}</td>
-									<td>{{ b.x }}</td>
-									<td>{{ b.y }}</td>
-									<td>{{ b.right }}</td>
-									<td>{{ b.bottom }}</td>
-									<td>{{ '%.1f' % b.conf }}</td>
+									<th>Person #</th>
+									<th>Full Name</th>
+									<th>Name Part</th>
+									<th>Value</th>
+									<th>X</th>
+									<th>Y</th>
+									<th>Right</th>
+									<th>Bottom</th>
+									<th>Page</th>
+									<th>Status</th>
 								</tr>
-							{% endfor %}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{% for name in result.gemini_names %}
+									{% set person_id = name.person_id %}
+									{% set full_name = name.full_name %}
+									{% set name_parts_list = [] %}
+									
+									<!-- Collect all parts for this person from matched_names -->
+									{% for m in result.matched_names %}
+										{% if m.person_id == person_id %}
+											{% set _ = name_parts_list.append(m) %}
+										{% endif %}
+									{% endfor %}
+									
+									<!-- Sort by part_index -->
+									{% set name_parts_list = name_parts_list|sort(attribute='part_index') %}
+									
+									<!-- Display rows for this person -->
+									{% if name_parts_list|length > 0 %}
+										{% for m in name_parts_list %}
+											<tr class="{% if m.right > 0 %}matched-row{% endif %}">
+												{% if loop.first %}
+													<td rowspan="{{ name_parts_list|length }}" style="background: #3498db; color: white; font-weight: bold; text-align: center; font-size: 16px;">{{ person_id }}</td>
+													<td rowspan="{{ name_parts_list|length }}" style="background: #ecf0f1; font-weight: bold;">{{ full_name }}</td>
+												{% endif %}
+												<td><strong>{{ m.part_name }}</strong></td>
+												<td><strong>{{ m.value }}</strong></td>
+												<td>{{ m.x }}</td>
+												<td>{{ m.y }}</td>
+												<td>{{ m.right }}</td>
+												<td>{{ m.bottom }}</td>
+												<td>{{ m.page }}</td>
+												<td>
+													{% if m.right > 0 %}
+														<span style="display: inline-block; background: #27ae60; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">✓ Found</span>
+													{% else %}
+														<span style="display: inline-block; background: #e74c3c; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">Not Found</span>
+													{% endif %}
+												</td>
+											</tr>
+										{% endfor %}
+									{% else %}
+										<tr>
+											<td style="background: #e74c3c; color: white; font-weight: bold; text-align: center;">{{ person_id }}</td>
+											<td colspan="9" style="color: #e74c3c; font-style: italic;">
+												<strong>{{ full_name }}</strong> - No name parts found in OCR
+											</td>
+										</tr>
+									{% endif %}
+								{% endfor %}
+							</tbody>
+						</table>
+					</div>
 				</div>
 			{% endfor %}
 		{% endif %}
