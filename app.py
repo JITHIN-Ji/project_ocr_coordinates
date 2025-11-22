@@ -12,6 +12,11 @@ import os
 import pandas as pd
 from gemini_field_extract import extract_names_from_image, prepare_gemini_output_for_matching
 from ocr_match_handler import OCRMatchHandler
+import pandas as pd
+from io import BytesIO
+from flask import send_file
+from fastapi.responses import RedirectResponse
+import time
 
 # Configure Tesseract path
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -25,6 +30,8 @@ app.mount("/bounding_extraction/static", StaticFiles(directory="static"), name="
 # Store OCR results temporarily
 ocr_results_cache = {}
 
+# Initialize global variable for Excel data
+excel_rows = []
 
 def _pil_image_from_pdf_page(pdf_page: fitz.Page, dpi: int = 200) -> Image.Image:
     """Convert a PDF page to a PIL image"""
@@ -134,6 +141,27 @@ def convert_ocr_boxes_to_structured_format(ocr_boxes, page_width, page_height, p
     }]
 
 
+def build_name_and_boxes(name_parts, matched_parts):
+    """
+    name_parts = ["Amal", "Krishna"]
+    matched_parts = list of OCR matches for this person
+
+    RETURNS:
+        full_name = "Amal Krishna"
+        boxes_str = "x1,y1,right1,bottom1 ; x2,y2,right2,bottom2"
+    """
+    full_name = " ".join(name_parts)
+    boxes = []
+    
+    for part in name_parts:
+        
+        m = next((item for item in matched_parts if item["value"] == part), None)
+        if m:
+            boxes.append(f"{m['x']},{m['y']},{m['right']},{m['bottom']}")
+    
+    boxes_str = " ; ".join(boxes)
+    return full_name, boxes_str
+
 def process_names_and_match(img, page_number, ocr_boxes, w, h):
     """
     Process Gemini name extraction and match each individual name part with OCR coordinates.
@@ -161,7 +189,8 @@ def process_names_and_match(img, page_number, ocr_boxes, w, h):
     
     for name_obj in gemini_names:
         full_name = name_obj.get("full_name", "")
-        name_parts = name_obj.get("name_parts", [])
+        
+        name_parts = name_obj.get("given_name_parts", []) + name_obj.get("surname_parts", [])
         person_id = name_obj.get("person_id", 0)
         
         print(f"Person {person_id}: {full_name}")
@@ -219,7 +248,8 @@ async def index(request: Request):
 
 @app.post("/upload", response_class=HTMLResponse)
 async def upload(request: Request, file: UploadFile = File(...)):
-    """Extract bounding boxes and text from uploaded PDF or image"""
+    start_time = time.time()
+    
     content = await file.read()
     filename = file.filename.lower()
     results = []
@@ -227,6 +257,8 @@ async def upload(request: Request, file: UploadFile = File(...)):
     if filename.endswith(".pdf"):
         doc = fitz.open(stream=content, filetype="pdf")
         for page in doc:
+            page_start_time = time.time()
+            
             img = _pil_image_from_pdf_page(page, dpi=300)
             img = _preprocess_image(img)
             
@@ -237,6 +269,8 @@ async def upload(request: Request, file: UploadFile = File(...)):
                 img, page.number + 1, ocr_boxes, w, h
             )
 
+            page_time = time.time() - page_start_time
+
             results.append({
                 "width": w,
                 "height": h,
@@ -246,8 +280,11 @@ async def upload(request: Request, file: UploadFile = File(...)):
                 "matched_names": matched_results,
                 "total_names": len(gemini_names),
                 "page_label": f"Page {page.number + 1}",
+                "processing_time": round(page_time, 2)
             })
     else:
+        page_start_time = time.time()
+        
         img = Image.open(io.BytesIO(content)).convert("RGB")
         img = _preprocess_image(img)
         
@@ -258,6 +295,8 @@ async def upload(request: Request, file: UploadFile = File(...)):
             img, 1, ocr_boxes, w, h
         )
 
+        page_time = time.time() - page_start_time
+
         results.append({
             "width": w,
             "height": h,
@@ -267,59 +306,160 @@ async def upload(request: Request, file: UploadFile = File(...)):
             "matched_names": matched_results,
             "total_names": len(gemini_names),
             "page_label": f"Image File: {file.filename}",
+            "processing_time": round(page_time, 2)
         })
 
-    # Store results in cache for download
-    ocr_results_cache['latest'] = results
-
-    return templates.TemplateResponse("index.html", {"request": request, "results": results})
-
-
-@app.get("/download-ocr-excel")
-async def download_ocr_excel():
-    """Download OCR coordinates as Excel file"""
-    if 'latest' not in ocr_results_cache:
-        return HTMLResponse(content="No OCR results available. Please upload a file first.", status_code=400)
+    total_time = time.time() - start_time
     
-    results = ocr_results_cache['latest']
-    
-    # Prepare data for Excel
-    all_data = []
-    
+    global excel_rows
+    excel_rows = []
+
     for result in results:
-        page_label = result['page_label']
-        
-        for box in result['ocr_boxes']:
-            all_data.append({
-                'Page': page_label,
-                'Text': box['text'],
-                'X': box['x'],
-                'Y': box['y'],
-                'Right': box['right'],
-                'Bottom': box['bottom'],
-                'Width': box['right'] - box['x'],
-                'Height': box['bottom'] - box['y'],
-                'Confidence': round(box['conf'], 2)
+        filename = file.filename
+        gemini_names = result["gemini_names"]
+        matched = result["matched_names"]
+
+        for person in gemini_names:
+
+            person_matches = [m for m in matched if m["person_id"] == person["person_id"]]
+
+            given_parts = person["given_name_parts"]
+            given_name, given_boxes = build_name_and_boxes(given_parts, person_matches)
+
+            surname_parts = person["surname_parts"]
+            surname, surname_boxes = build_name_and_boxes(surname_parts, person_matches)
+
+            excel_rows.append({
+                "filename": filename,
+                "given_name": given_name,
+                "given_name_boxes": given_boxes,
+                "surname": surname,
+                "surname_boxes": surname_boxes
             })
     
-    # Create DataFrame
-    df = pd.DataFrame(all_data)
+
+    ocr_results_cache['latest'] = results
+
+    return templates.TemplateResponse("index.html", {
+        "request": request, 
+        "results": results,
+        "total_processing_time": round(total_time, 2)
+    })
+
+@app.get("/download-excel")
+def download_excel():
+    df = pd.DataFrame(excel_rows)
     
-    # Create Excel file in memory
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, sheet_name='OCR Coordinates', index=False)
-        
-        # Auto-adjust column widths
-        worksheet = writer.sheets['OCR Coordinates']
-        for i, col in enumerate(df.columns):
-            max_length = max(df[col].astype(str).apply(len).max(), len(col)) + 2
-            worksheet.set_column(i, i, max_length)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False)
     
     output.seek(0)
     
     return StreamingResponse(
         output,
-        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={'Content-Disposition': 'attachment; filename=ocr_coordinates.xlsx'}
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=ocr_results.xlsx"}
     )
+
+
+
+@app.get("/run-batch")
+def run_batch():
+    batch_start_time = time.time()
+    
+    global excel_rows
+    excel_rows = []  # reset list
+
+    upload_folder = "uploads"
+    
+    # Check if folder exists
+    if not os.path.exists(upload_folder):
+        print(f"❌ ERROR: '{upload_folder}' folder not found!")
+        return RedirectResponse("/download-excel", status_code=302)
+    
+    files = [f for f in os.listdir(upload_folder) if f.lower().endswith((".png", ".jpg", ".jpeg", ".pdf"))]
+    
+    if not files:
+        print(f"⚠️ WARNING: No files found in '{upload_folder}' folder!")
+        return RedirectResponse("/download-excel", status_code=302)
+    
+    print(f"\n{'='*70}")
+    print(f"🚀 BATCH PROCESSING STARTED")
+    print(f"{'='*70}")
+    print(f"📂 Found {len(files)} files in '{upload_folder}' folder\n")
+
+    for file_idx, f in enumerate(files, 1):
+        file_start_time = time.time()
+        filepath = os.path.join(upload_folder, f)
+        
+        print(f"\n{'─'*70}")
+        print(f"📄 Processing [{file_idx}/{len(files)}]: {f}")
+        print(f"{'─'*70}")
+
+        try:
+            # Load image
+            if filepath.lower().endswith(".pdf"):
+                doc = fitz.open(filepath)
+                page = doc[0]  # First page only
+                img = _pil_image_from_pdf_page(page, dpi=300)
+                page_number = 1
+                print(f"   ✓ Loaded PDF (page 1)")
+            else:
+                img = Image.open(filepath).convert("RGB")
+                page_number = 1
+                print(f"   ✓ Loaded image")
+
+            # Preprocess image
+            img = _preprocess_image(img)
+            print(f"   ✓ Preprocessed image")
+
+            # OCR
+            ocr_boxes = _extract_boxes_from_image(img)
+            w, h = img.size
+            print(f"   ✓ OCR completed: {len(ocr_boxes)} words found")
+
+            # GEMINI + MATCHING
+            gemini_names, matched_results = process_names_and_match(
+                img, page_number, ocr_boxes, w, h
+            )
+            print(f"   ✓ Gemini extracted {len(gemini_names)} names")
+
+            # Build Excel rows
+            for person in gemini_names:
+                person_matches = [m for m in matched_results if m["person_id"] == person["person_id"]]
+
+                # Given name and surname
+                given_parts = person["given_name_parts"]
+                given_name, given_boxes = build_name_and_boxes(given_parts, person_matches)
+
+                surname_parts = person["surname_parts"]
+                surname, surname_boxes = build_name_and_boxes(surname_parts, person_matches)
+
+                excel_rows.append({
+                    "filename": f,
+                    "given_name": given_name,
+                    "given_name_boxes": given_boxes,
+                    "surname": surname,
+                    "surname_boxes": surname_boxes
+                })
+            
+            file_time = time.time() - file_start_time
+            print(f"   ⏱️ Processing time: {file_time:.2f} seconds")
+            print(f"   ✅ SUCCESS: Added {len(gemini_names)} records to Excel")
+            
+        except Exception as e:
+            print(f"   ❌ ERROR processing {f}: {str(e)}")
+            continue
+    
+    total_batch_time = time.time() - batch_start_time
+    
+    print(f"\n{'='*70}")
+    print(f"✅ BATCH PROCESSING COMPLETED")
+    print(f"{'='*70}")
+    print(f"📊 Total records in Excel: {len(excel_rows)}")
+    print(f"⏱️ Total batch processing time: {total_batch_time:.2f} seconds")
+    print(f"⏱️ Average time per file: {total_batch_time/len(files):.2f} seconds")
+    print(f"{'='*70}\n")
+
+    return RedirectResponse("/download-excel", status_code=302)
