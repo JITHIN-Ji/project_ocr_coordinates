@@ -68,6 +68,24 @@
 		.download-excel-btn:hover {
 			background: #229954;
 		}
+		.total-time-banner {
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			color: white;
+			padding: 20px;
+			border-radius: 8px;
+			margin-bottom: 32px;
+			text-align: center;
+			box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+		}
+		.total-time-banner h2 {
+			margin: 0 0 8px 0;
+			font-size: 24px;
+		}
+		.total-time-banner .time {
+			font-size: 36px;
+			font-weight: bold;
+			margin: 0;
+		}
 		.result-section { 
 			margin-top: 32px; 
 			border-top: 3px solid #3498db;
@@ -101,6 +119,9 @@
 			font-size: 24px;
 			font-weight: bold;
 			color: #2c3e50;
+		}
+		.stat-value.time {
+			color: #9b59b6;
 		}
 		.content-grid {
 			display: grid;
@@ -227,9 +248,18 @@
 			</form>
 		</div>
 
+		<div style="margin-bottom:20px;">
+			<a href="/run-batch" class="download-excel-btn">🚀 Start Auto Processing</a>
+		</div>
+
+		{% if total_processing_time %}
+			<div class="total-time-banner">
+				<h2>⏱️ Total Processing Time</h2>
+				<p class="time">{{ total_processing_time }} seconds</p>
+			</div>
+		{% endif %}
+
 		{% if results %}
-			<a href="/download-ocr-excel" class="download-excel-btn">📥 Download OCR Coordinates (Excel)</a>
-			
 			{% for result in results %}
 				<div class="result-section">
 					<div class="page-title">📄 {{ result.page_label }}</div>
@@ -251,6 +281,7 @@
 							<span class="stat-label">Image Size</span>
 							<span class="stat-value">{{ result.width }} × {{ result.height }}</span>
 						</div>
+						
 					</div>
 
 					<div class="content-grid">
