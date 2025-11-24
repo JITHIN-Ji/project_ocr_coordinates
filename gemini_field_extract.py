@@ -56,6 +56,7 @@ YOUR TASK:
        - "Where Property Is Situated"
 
    **If the heading is not clearly a person-name column, DO NOT extract anything from that column.**
+
 2. **CRITICAL SURNAME RULE:**
    - If a column heading indicates surname-first ordering — specifically when the heading contains the phrase:
        "Name of Each Voter at Full Length the Surname Being First"
@@ -66,36 +67,60 @@ YOUR TASK:
        * First word = given name
        * Remaining words = surname
 
+3. **SPACE-BASED NAME SPLITTING RULES:**
+   
+   **NORMAL ORDER (given name first):**
+   - Find the **first space** in the name text
+   - Everything **BEFORE the first space** = given_name
+   - Everything **AFTER the first space** = surname
+   
+   Example: "WalshJohnHenry Arnold"
+   - First space appears before "Arnold"
+   - given_name: "WalshJohnHenry"
+   - surname: "Arnold"
+   
+   **SURNAME-FIRST ORDER (when column heading indicates "surname being first"):**
+   - Find the **first space** in the name text
+   - Everything **BEFORE the first space** = surname (but return as given_name due to swap)
+   - Everything **AFTER the first space** = given_name (but return as surname due to swap)
+   
+   Example: "WalshJohnHenry Arnold" (in surname-first column)
+   - First space appears before "Arnold"
+   - Actual: WalshJohnHenry (surname), Arnold (given name)
+   - **SWAPPED OUTPUT:**
+     - given_name: "Arnold"
+     - surname: "WalshJohnHenry"
 
-3. Identify names that are **split across multiple lines** (e.g., "jit" on one line and "hin" on the next).
-4. For each complete name:
-    - Determine the **given name** and **surname** based on the column heading rule above.
-    - Split each part into individual words.
+4. Identify names that are **split across multiple lines** (e.g., "jit" on one line and "hin" on the next).
+
+5. For each complete name:
+    - Determine the **given name** and **surname** based on the space-finding rule above.
+    - Split each part into individual words where spaces exist.
     - **If a word is split across lines, keep the fragments as separate strings in the parts array.**
     - Preserve original spelling and order.
 
 NAME EXTRACTION RULES:
 - **Normal case (no surname-first indicator in heading):** 
-  First word = given name; remaining words = surname.
+  Everything before first space = given name; everything after first space = surname.
   Example:
-    "Walker Richard Zouche"
-        given_name: "Walker"
-        surname: "Richard Zouche"
+    "WalshJohnHenry Arnold"
+        given_name: "WalshJohnHenry"
+        surname: "Arnold"
         
 - **Surname-first case (column heading indicates "surname being first" or similar):**
   **SWAP THE VALUES:** Return surname as given_name, and given name as surname.
   
   Example 1:
-    Actual name in document: "Portal Robert" (where portal is given name, Robert is surname)
+    Actual name in document: "Portal Robert" (where Portal is surname, Robert is given name)
     Return as:
         given_name: "Robert"  
-        surname: "portal"  
+        surname: "Portal"  
   
   Example 2:
-    Actual name in document: "Walker Richard Zouche" (where Walker is given name, Richard Zouche is surname)
+    Actual name in document: "WalshJohnHenry Arnold" (where WalshJohnHenry is surname, Arnold is given name)
     Return as:
-        given_name: "Richard Zouche"  
-        surname: "Walker"  
+        given_name: "Arnold"  
+        surname: "WalshJohnHenry"  
         
 - **If a word is broken across lines, keep fragments separate:**
     "jit" on line 1 + "hin" on line 2 → ["jit", "hin"]
@@ -113,22 +138,23 @@ OUTPUT FORMAT — Return ONLY this JSON (NO markdown, NO explanation):
         {
             "full_name": "Jithin Rajesh",
             "given_name": "Jithin",
-            "given_name_parts": ["jit", "hin"],
+            "given_name_parts": ["jithin"],
             "surname": "Rajesh",
             "surname_parts": ["Rajesh"]
         },
         {
-            "full_name": "Amal Krishna",
-            "given_name": "Amal",
-            "given_name_parts": ["Amal"],
-            "surname": "Krishna",
-            "surname_parts": ["Krishna"]
+            "full_name": "WalshJohnHenry Arnold",
+            "given_name": "WalshJohnHenry",
+            "given_name_parts": ["WalshJohnHenry"],
+            "surname": "Arnold",
+            "surname_parts": ["Arnold"]
         }
     ]
 }
 
 CRITICAL REQUIREMENTS:
 - Extract ONLY from name-related columns (e.g., "Christian Names", "Names of Each Voter", "Full Name", "Name") — ignore all other columns.
+- **Use the first space to determine where given_name ends and surname begins.**
 - **If a word/name is split across lines, keep the fragments as separate strings in the parts array** (e.g., ["jit", "hin"]).
 - **CRITICAL:** If heading indicates "surname being first", SWAP the values - return surname as given_name and given name as surname.
 - Do NOT invent or assume names.
