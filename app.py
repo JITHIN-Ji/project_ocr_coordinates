@@ -17,6 +17,7 @@ from io import BytesIO
 from flask import send_file
 from fastapi.responses import RedirectResponse
 import time
+from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 
 # Configure Tesseract path
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -91,9 +92,11 @@ def _extract_boxes_from_image(img: Image.Image):
             if w <= 0 or h <= 0:
                 continue
             
-            pos_key = (round(x / 5) * 5, round(y / 5) * 5, text.lower())
+            pos_key = (x, y, text.lower())
+
             
-            if pos_key not in all_boxes or conf > all_boxes[pos_key]["conf"]:
+            if pos_key not in all_boxes and conf > 0:
+
                 all_boxes[pos_key] = {
                     "x": x,
                     "y": y,
@@ -140,51 +143,66 @@ def convert_ocr_boxes_to_structured_format(ocr_boxes, page_width, page_height, p
         "words": words
     }]
 
+def merge_multiple_boxes(box_list):
+    """
+    box_list = ["1040,1397,1252,1448", "1270,1399,1632,1470"]
+    returns "1040,1397,1632,1470"
+    """
+    if not box_list:
+        return ""
+
+    coords = []
+    for b in box_list:
+        parts = [int(v) for v in b.split(",")]
+        coords.append(parts)  # [x1,y1,x2,y2]
+
+    x1 = min(c[0] for c in coords)
+    y1 = min(c[1] for c in coords)
+    x2 = max(c[2] for c in coords)
+    y2 = max(c[3] for c in coords)
+
+    return f"{x1},{y1},{x2},{y2}"
+
 
 def build_name_and_boxes(name_parts, matched_parts):
-    """
-    name_parts = ["Amal", "Krishna"]
-    matched_parts = list of OCR matches for this person
-
-    RETURNS:
-        full_name = "Amal Krishna"
-        boxes_str = "x1,y1,right1,bottom1 ; x2,y2,right2,bottom2"
-    """
-    full_name = " ".join(name_parts)
     boxes = []
-    
+
     for part in name_parts:
-        
         m = next((item for item in matched_parts if item["value"] == part), None)
         if m:
             boxes.append(f"{m['x']},{m['y']},{m['right']},{m['bottom']}")
+
     
-    boxes_str = " ; ".join(boxes)
-    return full_name, boxes_str
+    merged_box = merge_multiple_boxes(boxes)
+
+    full_name = " ".join(name_parts)
+    return full_name, merged_box
+
 
 def process_names_and_match(img, page_number, ocr_boxes, w, h):
     """
     Process Gemini name extraction and match each individual name part with OCR coordinates.
     For "Amal Krishna Rajesh", finds coordinates for "Amal", "Krishna", and "Rajesh" separately.
+    Uses context-aware matching to ensure parts belong to the same person.
     """
     
-    # Extract names using Gemini
+    
     gemini_result = extract_names_from_image(img)
     gemini_names = prepare_gemini_output_for_matching(gemini_result)
 
-    # Convert OCR boxes to structured format
+    
     structured_ocr_data = convert_ocr_boxes_to_structured_format(
         ocr_boxes, w, h, page_number
     )
 
-    # Initialize matcher
+    
     matcher = OCRMatchHandler(fuzzy_threshold=0.80)
 
-    # Match each individual name part with OCR coordinates
+    
     matched_results = []
     
     print(f"\n{'='*70}")
-    print(f"MATCHING INDIVIDUAL NAME PARTS WITH OCR COORDINATES")
+    print(f"MATCHING INDIVIDUAL NAME PARTS WITH OCR COORDINATES (CONTEXT-AWARE)")
     print(f"{'='*70}\n")
     
     for name_obj in gemini_names:
@@ -196,17 +214,21 @@ def process_names_and_match(img, page_number, ocr_boxes, w, h):
         print(f"Person {person_id}: {full_name}")
         print(f"  Searching for individual parts: {name_parts}\n")
         
-        # Match each individual part (e.g., "Amal", "Krishna", "Rajesh")
+        
         for part_index, name_part in enumerate(name_parts, 1):
             if not name_part.strip():
                 continue
             
-            # Find match for this specific name part
+            
+            context_words = [p for p in name_parts if p != name_part and p.strip()]
+            
+            
             match_info, structured_ocr_data = matcher.find_best_match_for_value(
-                name_part, structured_ocr_data
+                name_part, structured_ocr_data, context_words=context_words
             )
             
             if match_info:
+                context_info = f" (base: {match_info.get('base_score', 0):.2f}, context: {match_info.get('context_bonus', 0):.2f}, final: {match_info.get('score', 0):.2f})" if context_words else ""
                 matched_results.append({
                     "person_id": person_id,
                     "full_name": full_name,
@@ -219,7 +241,7 @@ def process_names_and_match(img, page_number, ocr_boxes, w, h):
                     "bottom": round(match_info["bottom"]),
                     "page": match_info["page_number"],
                 })
-                print(f"  ✓ '{name_part}' found at ({match_info['x0']}, {match_info['top']}) -> ({match_info['x1']}, {match_info['bottom']})")
+                print(f"  ✓ '{name_part}' found at ({match_info['x0']}, {match_info['top']}) -> ({match_info['x1']}, {match_info['bottom']}){context_info}")
             else:
                 matched_results.append({
                     "person_id": person_id,
@@ -347,19 +369,35 @@ async def upload(request: Request, file: UploadFile = File(...)):
     })
 
 @app.get("/download-excel")
-def download_excel():
+async def download_excel():
+    if not excel_rows:
+        raise HTTPException(status_code=400, detail="No data to export. Please upload an image first.")
+
     df = pd.DataFrame(excel_rows)
-    
+
+    # Create output folder
+    os.makedirs("output", exist_ok=True)
+
+    # Correct line
+    save_path = os.path.join("output", "ocr_results.xlsx")
+
+    # Save Excel permanently
+    df.to_excel(save_path, index=False)
+
+    # Also prepare download
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False)
-    
     output.seek(0)
-    
+
+    headers = {
+        "Content-Disposition": 'attachment; filename="ocr_results.xlsx"'
+    }
+
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=ocr_results.xlsx"}
+        headers=headers
     )
 
 
